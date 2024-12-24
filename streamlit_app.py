@@ -1,12 +1,53 @@
 import streamlit as st
 import sqlite3
-import pandas as pd
+import os
 from langchain.llms import OpenAI
 from langchain_community.utilities import SQLDatabase
 from langchain_experimental.sql import SQLDatabaseChain
-from langchain.agents import create_sql_agent
-from langchain.agents.agent_toolkits import SQLDatabaseToolkit
-from langchain.agents.agent_types import AgentType
+
+def create_database_from_sql(sql_file, db_file):
+    """Create a SQLite database from a .sql file with proper encoding handling."""
+    try:
+        # Try different encodings
+        encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252']
+
+        for encoding in encodings:
+            try:
+                conn = sqlite3.connect(db_file)
+                cursor = conn.cursor()
+
+                with open(sql_file, 'r', encoding=encoding) as f:
+                    sql_script = f.read()
+
+                # Split the script into individual statements
+                # This handles both semicolon and GO statement separators
+                statements = [statement.strip() for statement in sql_script.replace('\nGO', ';').split(';') if statement.strip()]
+
+                # Execute each statement separately
+                for statement in statements:
+                    try:
+                        cursor.execute(statement)
+                        conn.commit()
+                    except sqlite3.Error as e:
+                        st.warning(f"Skipping statement due to error: {e}")
+                        continue
+
+                conn.close()
+                st.success(f"Database created successfully using {encoding} encoding!")
+                return True
+
+            except UnicodeDecodeError:
+                continue  # Try next encoding
+            except Exception as e:
+                st.warning(f"Failed with {encoding} encoding: {str(e)}")
+                continue
+
+        st.error("Failed to create database with any encoding")
+        return False
+
+    except Exception as e:
+        st.error(f"Error creating database: {str(e)}")
+        return False
 
 # Set up page configuration
 st.set_page_config(page_title="SQL Data Chat Assistant", layout="wide")
@@ -16,35 +57,37 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 def load_sql_database(sql_file):
-    """Connect to the SQL database"""
+    """Connect to the SQL database."""
     return SQLDatabase.from_uri(f"sqlite:///{sql_file}")
-
-def initialize_agent(db):
-    """Initialize the SQL agent"""
-    llm = OpenAI(temperature=0, openai_api_key=st.secrets["OPENAI_API_KEY"])
-    toolkit = SQLDatabaseToolkit(db=db, llm=llm)
-
-    return create_sql_agent(
-        llm=llm,
-        toolkit=toolkit,
-        verbose=True,
-        agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-    )
 
 # Main app
 st.title("💬 Chat with Your SQL Database")
 
 # File uploader for SQL file
-sql_file = st.file_uploader("Upload your SQL file", type=['sql', 'db', 'sqlite'])
+uploaded_file = st.file_uploader("Upload your SQL file or SQLite database", type=['sql', 'db', 'sqlite'])
 
-if sql_file:
+if uploaded_file:
     # Save the uploaded file
-    with open("temp_database.db", "wb") as f:
-        f.write(sql_file.getbuffer())
+    file_name = uploaded_file.name
+    with open(file_name, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+
+    # Check file type and process accordingly
+    if file_name.endswith(".sql"):
+        st.info("Detected a .sql file. Creating a SQLite database...")
+        db_file = "temp_database.db"
+        if create_database_from_sql(file_name, db_file):
+            st.success("Database created successfully!")
+            sql_file = db_file
+        else:
+            st.error("Failed to create database from the .sql file.")
+            st.stop()
+    else:
+        sql_file = file_name
 
     try:
         # Initialize database and agent
-        db = load_sql_database("temp_database.db")
+        db = load_sql_database(sql_file)
 
         # Create the SQLDatabaseChain
         llm = OpenAI(temperature=0, openai_api_key=st.secrets["OPENAI_API_KEY"])
@@ -83,4 +126,4 @@ if sql_file:
         st.error(f"Error loading database: {str(e)}")
 
 else:
-    st.info("Please upload a SQL database file to begin chatting.")
+    st.info("Please upload a SQL database file or a .sql script to begin chatting.")
