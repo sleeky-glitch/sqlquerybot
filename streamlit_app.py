@@ -1,8 +1,9 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
-from langchain import SQLDatabase, SQLDatabaseChain
 from langchain.llms import OpenAI
+from langchain_community.utilities import SQLDatabase
+from langchain_experimental.sql import SQLDatabaseChain
 from langchain.agents import create_sql_agent
 from langchain.agents.agent_toolkits import SQLDatabaseToolkit
 from langchain.agents.agent_types import AgentType
@@ -44,7 +45,10 @@ if sql_file:
     try:
         # Initialize database and agent
         db = load_sql_database("temp_database.db")
-        agent = initialize_agent(db)
+
+        # Create the SQLDatabaseChain
+        llm = OpenAI(temperature=0, openai_api_key=st.secrets["OPENAI_API_KEY"])
+        db_chain = SQLDatabaseChain.from_llm(llm, db, verbose=True)
 
         # Display chat interface
         st.write("Chat with your data! Ask questions about your database.")
@@ -66,7 +70,7 @@ if sql_file:
             # Generate AI response
             with st.chat_message("assistant"):
                 try:
-                    response = agent.run(prompt)
+                    response = db_chain.run(prompt)
                     st.markdown(response)
                     # Add AI response to chat history
                     st.session_state.messages.append({"role": "assistant", "content": response})
@@ -80,6 +84,3 @@ if sql_file:
 
 else:
     st.info("Please upload a SQL database file to begin chatting.")
-
-# Created/Modified files during execution:
-print("temp_database.db")
