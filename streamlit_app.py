@@ -1,75 +1,85 @@
 import streamlit as st
-import pandas as pd
 import sqlite3
+import pandas as pd
+from langchain import SQLDatabase, SQLDatabaseChain
+from langchain.llms import OpenAI
+from langchain.agents import create_sql_agent
+from langchain.agents.agent_toolkits import SQLDatabaseToolkit
+from langchain.agents.agent_types import AgentType
 
-def execute_sql_file(conn, sql_file):
-    """
-    Execute SQL commands from a .sql file.
-    """
-    try:
-        with open(sql_file, 'r') as file:
-            sql_script = file.read()
-        conn.executescript(sql_script)
-        st.success("SQL file executed successfully!")
-    except Exception as e:
-        st.error(f"Error executing SQL file: {e}")
+# Set up page configuration
+st.set_page_config(page_title="SQL Data Chat Assistant", layout="wide")
 
-def run_query(conn, query):
-    """
-    Run a SQL query and return the results as a DataFrame.
-    """
-    try:
-        return pd.read_sql_query(query, conn)
-    except Exception as e:
-        st.error(f"Error executing query: {e}")
-        return None
+# Initialize session state for chat history
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-# Streamlit app
-st.title("SQL Query Explorer")
+def load_sql_database(sql_file):
+    """Connect to the SQL database"""
+    return SQLDatabase.from_uri(f"sqlite:///{sql_file}")
 
-# File uploader for SQLite database
-uploaded_db = st.file_uploader("Upload your SQLite database file", type=['db', 'sqlite', 'sqlite3'])
+def initialize_agent(db):
+    """Initialize the SQL agent"""
+    llm = OpenAI(temperature=0, openai_api_key=st.secrets["OPENAI_API_KEY"])
+    toolkit = SQLDatabaseToolkit(db=db, llm=llm)
+
+    return create_sql_agent(
+        llm=llm,
+        toolkit=toolkit,
+        verbose=True,
+        agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+    )
+
+# Main app
+st.title("💬 Chat with Your SQL Database")
 
 # File uploader for SQL file
-uploaded_sql = st.file_uploader("Upload your SQL file", type=['sql'])
+sql_file = st.file_uploader("Upload your SQL file", type=['sql', 'db', 'sqlite'])
 
-if uploaded_db:
-    # Create a connection to the uploaded SQLite database
-    conn = sqlite3.connect(uploaded_db.name)
+if sql_file:
+    # Save the uploaded file
+    with open("temp_database.db", "wb") as f:
+        f.write(sql_file.getbuffer())
 
-    # If an SQL file is uploaded, execute it
-    if uploaded_sql:
-        execute_sql_file(conn, uploaded_sql)
+    try:
+        # Initialize database and agent
+        db = load_sql_database("temp_database.db")
+        agent = initialize_agent(db)
 
-    # Text area for SQL query input
-    query = st.text_area("Enter your SQL query:", height=100)
+        # Display chat interface
+        st.write("Chat with your data! Ask questions about your database.")
 
-    if st.button("Run Query"):
-        if query.strip():
-            results = run_query(conn, query)
-            if results is not None:
-                st.write("Query Results:")
-                st.dataframe(results)
+        # Display chat messages
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
 
-                # Download results as CSV
-                csv = results.to_csv(index=False)
-                st.download_button(
-                    label="Download results as CSV",
-                    data=csv,
-                    file_name="query_results.csv",
-                    mime="text/csv",
-                )
-        else:
-            st.warning("Please enter a valid SQL query.")
+        # Chat input
+        if prompt := st.chat_input("What would you like to know about your data?"):
+            # Add user message to chat history
+            st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # Close the connection when the app ends
-    conn.close()
+            # Display user message
+            with st.chat_message("user"):
+                st.markdown(prompt)
 
-# Sidebar instructions
-st.sidebar.header("Instructions")
-st.sidebar.markdown("""
-1. Upload your SQLite database file (.db, .sqlite, .sqlite3).
-2. Optionally, upload an SQL file (.sql) to execute commands on the database.
-3. Enter your SQL query in the text area and click 'Run Query'.
-4. View the results and download them as a CSV file if needed.
-""")
+            # Generate AI response
+            with st.chat_message("assistant"):
+                try:
+                    response = agent.run(prompt)
+                    st.markdown(response)
+                    # Add AI response to chat history
+                    st.session_state.messages.append({"role": "assistant", "content": response})
+                except Exception as e:
+                    error_message = f"An error occurred: {str(e)}"
+                    st.error(error_message)
+                    st.session_state.messages.append({"role": "assistant", "content": error_message})
+
+    except Exception as e:
+        st.error(f"Error loading database: {str(e)}")
+
+else:
+    st.info("Please upload a SQL database file to begin chatting.")
+
+# Created/Modified files during execution:
+print("temp_database.db")
