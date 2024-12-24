@@ -1,52 +1,75 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from io import StringIO
 
-def init_connection():
-    return sqlite3.connect(':memory:', check_same_thread=False)
+def execute_sql_file(conn, sql_file):
+    """
+    Execute SQL commands from a .sql file.
+    """
+    try:
+        with open(sql_file, 'r') as file:
+            sql_script = file.read()
+        conn.executescript(sql_script)
+        st.success("SQL file executed successfully!")
+    except Exception as e:
+        st.error(f"Error executing SQL file: {e}")
 
 def run_query(conn, query):
-    return pd.read_sql_query(query, conn)
+    """
+    Run a SQL query and return the results as a DataFrame.
+    """
+    try:
+        return pd.read_sql_query(query, conn)
+    except Exception as e:
+        st.error(f"Error executing query: {e}")
+        return None
 
-st.title('SQL Query Explorer')
+# Streamlit app
+st.title("SQL Query Explorer")
 
-# File uploader for SQL database
-uploaded_file = st.file_uploader("Upload your SQLite database file", type=['db', 'sqlite', 'sqlite3'])
+# File uploader for SQLite database
+uploaded_db = st.file_uploader("Upload your SQLite database file", type=['db', 'sqlite', 'sqlite3'])
 
-if uploaded_file is not None:
-    # Create a connection to the database
-    conn = init_connection()
+# File uploader for SQL file
+uploaded_sql = st.file_uploader("Upload your SQL file", type=['sql'])
+
+if uploaded_db:
+    # Create a connection to the uploaded SQLite database
+    conn = sqlite3.connect(uploaded_db.name)
+
+    # If an SQL file is uploaded, execute it
+    if uploaded_sql:
+        execute_sql_file(conn, uploaded_sql)
 
     # Text area for SQL query input
     query = st.text_area("Enter your SQL query:", height=100)
 
-    if st.button('Run Query'):
-        try:
-            # Execute query and display results
+    if st.button("Run Query"):
+        if query.strip():
             results = run_query(conn, query)
-            st.write("Query Results:")
-            st.dataframe(results)
+            if results is not None:
+                st.write("Query Results:")
+                st.dataframe(results)
 
-            # Download results as CSV
-            csv = results.to_csv(index=False)
-            st.download_button(
-                label="Download results as CSV",
-                data=csv,
-                file_name='query_results.csv',
-                mime='text/csv',
-            )
-        except Exception as e:
-            st.error(f"Error executing query: {str(e)}")
+                # Download results as CSV
+                csv = results.to_csv(index=False)
+                st.download_button(
+                    label="Download results as CSV",
+                    data=csv,
+                    file_name="query_results.csv",
+                    mime="text/csv",
+                )
+        else:
+            st.warning("Please enter a valid SQL query.")
 
-    # Close connection
+    # Close the connection when the app ends
     conn.close()
 
-# Add sidebar with instructions
+# Sidebar instructions
 st.sidebar.header("Instructions")
 st.sidebar.markdown("""
-1. Upload your SQLite database file
-2. Enter your SQL query in the text area
-3. Click 'Run Query' to execute
-4. Download results as CSV if needed
+1. Upload your SQLite database file (.db, .sqlite, .sqlite3).
+2. Optionally, upload an SQL file (.sql) to execute commands on the database.
+3. Enter your SQL query in the text area and click 'Run Query'.
+4. View the results and download them as a CSV file if needed.
 """)
